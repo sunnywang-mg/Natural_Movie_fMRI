@@ -1,0 +1,814 @@
+---
+title: "PCA_fMRI"
+author: "Sunny"
+date: "2025-02-09"
+output: pdf_document
+---
+
+Load libraries that will be used later
+
+```{r}
+library(ggplot2)
+library(matrixStats)
+
+```
+
+variables initialization
+
+```{r}
+BaseDir <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie2_lh"
+
+directories <- c("_csv", 
+                 "_eigen", 
+                 "_scram", 
+                 "_sigPC", 
+                 "_Z_sigPC", 
+                 "_scalePC1", 
+                 "_PC1", 
+                 "_Tmean", 
+                 "_ratio", 
+                 "_sigEigen",
+                 "_sigPercent")
+
+for (dir in directories) {
+  dir_path <- paste0(BaseDir, dir)
+  if (!dir.exists(dir_path)) {
+    dir.create(dir_path, recursive = TRUE)
+    message("Created directory: ", dir_path)
+  } else {
+    message("Directory already exists: ", dir_path)
+  }
+}
+
+
+Raw=paste0(BaseDir,"_csv")
+
+PCA_eigenvalues_directory=paste0(BaseDir,"_eigen")
+
+PCA_scram_directory=paste0(BaseDir,"_scram")
+
+PCA_Signifnum_directory=paste0(BaseDir,"_sigPC")
+
+PCA_ZSignifnum_directory=paste0(BaseDir,"_Z_sigPC")
+
+PCA_scalePC_directory=paste0(BaseDir,"_scalePC1")
+
+PCA_PC1_directory=paste0(BaseDir,"_PC1")
+
+PCA_Tmean_directory=paste0(BaseDir,"_Tmean")
+
+PCA_ratio_directory=paste0(BaseDir,"_ratio")
+
+PCA_sigEigen_directory=paste0(BaseDir,"_sigEigen")
+
+PCA_sigPercent_directory=paste0(BaseDir,"_sigPercent")
+
+
+```
+
+stdvs
+
+```{r}
+dir1=PCA_eigenvalues_directory
+dir2=PCA_scram_directory
+
+DIR="C:/Users/Fariv/Desktop/FIX"
+
+files <- list.files(DIR,pattern = "\\.csv$",full.names = TRUE)
+
+for (file in files) {
+  data <- read.csv(file, header = TRUE)
+  
+  numeric_cols <- sapply(data, is.numeric)  # Identify numeric columns
+  data[, numeric_cols] <- data[, numeric_cols]^(1/4)  
+
+  write.csv(data, file = file, row.names = FALSE)
+  
+  cat("Processed:", file, "\n")  # Confirmation message
+}
+
+
+
+
+
+
+```
+
+Calculate number of valid components
+
+```{r}
+
+eigen_file_list <- list.files(PCA_eigenvalues_directory,pattern = "\\.csv$")
+
+for (raw_file_name in eigen_file_list) {
+  valid_PC_num <- data.frame(matrix(nrow=36001,ncol=2))
+  valid_PC_num[,1] <- (1:36001)
+  valid_PC_num[,2] <- NA
+
+  
+  eigen_data_path <- file.path(PCA_eigenvalues_directory, raw_file_name)
+  eigen_data <- read.csv(eigen_data_path, skip = 1,header = FALSE)[,-1]
+  
+  split_name <- unlist(strsplit(raw_file_name, "[._]"))
+  prefix <- c(paste(split_name[1:4], collapse = "_"))
+  
+  for (i in 1:37){
+    ROI=ROI_data[[i]]
+
+    cutoff_data_path <- file.path(PCA_scram_directory,paste("scram_eigen_1045_part_",i,".csv",sep=""))
+    cutoff_data <-  read.csv(cutoff_data_path, skip = 1,header = FALSE)[,-1]
+    
+    for (ROI_index in (1:(num_ROI_nodes/37))){ 
+      
+        eigenvalues <- (eigen_data[ROI_index+(i-1)*973,])^2 
+        num_valid =  numValidPC(ROI_index,eigenvalues,(cutoff_data[ROI_index,])^2)
+        
+        valid_PC_num[ROI_index+(i-1)*973, 2] <-num_valid
+        
+        print(paste(ROI_index+(i-1)*973,num_valid))
+          
+      }
+    }
+
+
+  suffix <- paste("rh_Valid_PC", "1D", sep = ".")
+  file_name <- paste(prefix, suffix, sep = "_")
+
+  
+  write.table(valid_PC_num, paste0(PCA_Signifnum_directory,"/",file_name), row.names = FALSE, col.names = FALSE, sep=" ")
+}
+
+
+
+
+
+```
+
+This chunk calculates the scaled principal component (PCn) eigenvalues for a set of subjects and saves the results
+
+```{r}
+PC_idx= 1
+
+eigenval_file_names <- list.files(PCA_eigenvalues_directory,pattern = "\\.csv$")
+
+
+for (i in 1:length(eigenval_file_names)) {
+  file_name=eigenval_file_names[i]
+  print(file_name)
+  file_prefix <- sub("_eigen\\.csv$", "", file_name)
+
+  suffix <- paste0("scale_PC",PC_idx,".1D")
+  out_file_name <- paste(file_prefix, suffix, sep = "_")
+  
+  eigen_data <- read.csv(paste0(PCA_eigenvalues_directory,"/",file_name), header = FALSE, skip = 1)[,-1]
+  eigen_data <- (eigen_data[, PC_idx, drop = FALSE])^2
+
+
+  signif_data <- read.table(paste0(PCA_Signifnum_directory,"/",file_prefix,"_Valid_PC.1D"))
+  signif_data <- signif_data[,2,drop=FALSE]
+
+  
+  df_scaled_eigen <- matrix(NA, nrow = 36001, ncol = 2)
+  df_scaled_eigen[,1] <- 1:36001
+  df_scaled_eigen[,2] <- 0
+
+  for (j in 1:36001) {
+    if (signif_data[j,]!=0 || is.na(signif_data[j,]!=0)){
+      df_scaled_eigen[j, 2] <- (eigen_data[j,] / signif_data[j,])}
+  }
+  
+  write.table(df_scaled_eigen, paste0(PCA_scalePC_directory,"/",out_file_name), row.names = FALSE, col.names = FALSE, sep=" ")
+}
+```
+
+Extract eigenval of PCn from eigenval files
+
+```{R}
+PC_idx= 1
+eigenval_file_names <- list.files(PCA_eigenvalues_directory,pattern = "\\.csv$")
+
+for (i in 52:length(eigenval_file_names)) {
+  file_name=eigenval_file_names[i]
+  print(file_name)
+  file_prefix <- sub("_eigen\\.csv$", "", file_name)
+
+  suffix <- paste0("PC",PC_idx,".1D")
+  out_file_name <- paste(file_prefix, suffix, sep = "_")
+  
+  eigen_data <- read.csv(paste0(PCA_eigenvalues_directory,"/",file_name), header = FALSE, skip = 1)[,-1]
+  eigen_data <- eigen_data[, PC_idx, drop = FALSE]
+  
+  df_PC1 <- matrix(NA, nrow = 36001, ncol = 2)
+  df_PC1[,1] <- 1:36001
+  df_PC1[,2] <- 0
+
+  for (j in 1:36001) {df_PC1[j, 2] <- eigen_data[j,]}
+  write.table(df_PC1, paste0(PCA_PC1_directory,"/",out_file_name), row.names = FALSE, col.names = FALSE, sep=" ")
+
+}
+```
+
+Produce mean files (.1D)
+
+```{r}
+dir=PCA_Signifnum_directory
+
+file_names <- list.files(dir,pattern = "\\.1D$")
+out_file_name <- "nat2_mean_lh_sigPC.1D"
+
+
+data_matrix <- matrix(NA, nrow = 36001, ncol = length(file_names))
+
+for (i in 1:length(file_names)) {
+  file_data <- read.table(paste0(dir,"/",file_names[i]), header = FALSE) 
+  data_matrix[, i] <- file_data[, 2]
+}
+
+mean_values <- rowMeans(data_matrix, na.rm = TRUE)  # na.rm=TRUE to handle any NAs
+
+mean_data <- data.frame(Index = 1:36001, Mean = mean_values)
+write.table(mean_data, paste0(dir,"/",out_file_name), row.names = FALSE, col.names = FALSE, sep = " ")
+```
+
+Z-score a .1D
+
+```{r}
+dir=PCA_Signifnum_directory
+file_names <- list.files(dir,pattern = "\\.1D$")
+for (file_name in file_names) {
+  file_prefix <- sub("\\Valid_PC.1D$", "", file_name)
+  file_suffix <- ("Z_Valid_PC.1D")
+ 
+  Z_signiPC <- matrix(NA, nrow = 36001, ncol = 2)
+  Z_signiPC[,1] <- 1:36001
+  
+  signif_data <- read.table(paste0(dir,"/",file_name), header = FALSE) 
+  signif_data <- signif_data[,2,drop=FALSE]
+  hist(signif_data[,])
+  
+  Z_signiPC[,2] <- scale(signif_data)*10
+  
+  write.table(Z_signiPC, paste0(PCA_ZSignifnum_directory,"/",file_prefix,file_suffix), row.names = FALSE, col.names = FALSE, sep = " ")
+}
+
+
+```
+
+histogram
+
+```{r}
+hist(signif_data[,])
+```
+
+Mean of time series
+
+```{r}
+
+file_names <- list.files(Raw,pattern = "\\.csv$")
+
+for (file_name in file_names){
+  file_prefix <- sub("\\.csv$", "", file_name)
+  file_suffix <- ("Tmean.1D")
+  out_file_name <- paste(file_prefix, file_suffix, sep = "_")
+  
+  T_data <- read.csv(paste0(Raw,"/",file_name), header = FALSE, skip = 1)[,-1]
+  
+  mean_T <- rowMeans(T_data, na.rm = TRUE)
+  mean_data <- data.frame(Index = 1:36001, Mean = mean_T)
+  
+  write.table(mean_data, paste0(PCA_Tmean_directory,"/",out_file_name), row.names = FALSE, col.names = FALSE, sep = " ")}
+
+
+```
+
+Correlation between two 1Ds Deetrend Plot
+
+```{r}
+Dir1=PCA_sigEigen_directory
+file1_names <- list.files(Dir1, pattern = "mean_rh.*\\.1D$")
+
+
+Dir2="C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie"
+file2_names <- list.files(Dir2,pattern = "ROI_lh.*\\.1D$", full.names = TRUE)
+
+
+for (i in 1:1){
+   
+  signum <- read.table(paste0(Dir1,"/",file1_names[i]), header = FALSE) 
+  signum <- signum[, 2]
+  ROIsize <- read.table(file2_names[i], header = FALSE) 
+  ROIsize <- ROIsize[, 2]
+  
+  # Drop data points where data1 or data2 is zero
+  valid_indices <- which(ROIsize != 0)
+  signum <- signum[valid_indices]
+  ROIsize <- ROIsize[valid_indices]
+  
+
+  detrended_full <- matrix(NA, nrow = 36001, ncol = 2)
+  detrended_full[,1] <- 1:36001
+  detrended_full[,2] <- 0
+  
+  #print(file1_names[i])
+  print(cor(signum,ROIsize))
+  plot(ROIsize,signum,
+     xlab = "ROI_size",
+     ylab = "Num_significant_components",
+     pch = 10,      # Use solid circles for points
+     col = "blue")  # Set color of points
+  abline(lm(signum~ROIsize), col = "red", lwd = 2)  # Regression line in red
+  
+
+  
+  
+  # Detrend data1 using data2 as the regressor
+  model <- lm(signum ~ ROIsize)
+  detrended_signum <- residuals(model)  # The detrended data1
+  hist(signum)
+
+  detrended_signum <- detrended_signum - min(detrended_signum)
+  
+  
+  detrended_full[valid_indices,2] <- detrended_signum
+  
+
+  # Compute and print the correlation after detrending
+  print(paste("Correlation after detrending:", cor(detrended_signum, ROIsize)))
+  
+  # Plot the scaled detrended data1 against data2
+  plot(ROIsize,detrended_signum,
+       xlab = "ROI_size",
+       ylab = "Num_significant_components",
+       pch = 10,      # Use solid circles for points
+       col = "green") # Set color of points
+  
+  # Optionally, add a regression line for the detrended data
+  abline(lm(detrended_signum~ROIsize), col = "red", lwd = 2)  # Regression line in red
+  hist(detrended_signum)
+  
+  
+  write.table(detrended_full, paste0(Dir1,"/","detren","_",file1_names[i]), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+}
+
+```
+
+Calculate eigen of sigComponents
+
+```{r}
+eigenval_file_names <- list.files(PCA_eigenvalues_directory,pattern = "\\.csv$")
+sigPC_file_names <- list.files(PCA_Signifnum_directory,pattern = "Movie.*\\.1D$",full.names = TRUE)
+
+
+for (i in 1:55) {
+  file_name=eigenval_file_names[i]
+  print(file_name)
+  file_prefix <- sub("_eigen\\.csv$", "", file_name)
+  file_suffix <- "sigEigen.1D"
+  out_file_name <- paste(file_prefix, file_suffix, sep = "_")
+  
+  
+  eigenval_file <- read.csv(paste0(PCA_eigenvalues_directory,"/",eigenval_file_names[i]), header = FALSE, skip = 1)[, -1]
+  sigPC_file <- read.table(sigPC_file_names[i], header = FALSE)
+  sigPC_counts <- sigPC_file[, 2]
+  
+  Result_file <- matrix(NA, nrow = 36001, ncol = 2)
+  Result_file[, 1] <- 1:36001 
+  
+  for (j in 1:36001) {
+    
+    sigNum <- sigPC_counts[j]
+    
+    if (is.na(sigNum)) {
+      Result_file[j, 2] <- NA
+      next
+    }
+    
+    eigenvals <- eigenval_file[j, ]^2  # Extract the row
+
+    sig_Var <- if (sigNum > 0) sum(eigenvals[1:sigNum]) else 0
+
+    Result_file[j, 2] <- sig_Var
+    
+  }
+  write.table(Result_file, paste0(PCA_sigEigen_directory,"/",out_file_name), row.names = FALSE, col.names = FALSE, sep = " ")
+}
+
+```
+
+ratio significant/non-significant
+
+```{r}
+eigenval_file_names <- list.files(PCA_eigenvalues_directory,pattern = "\\.csv$")
+sigPC_file_names <- list.files(PCA_Signifnum_directory,pattern = "Movie.*\\.1D$",full.names = TRUE)
+
+
+for (i in 1:55) {
+  file_name=eigenval_file_names[i]
+  print(file_name)
+  file_prefix <- sub("_eigen\\.csv$", "", file_name)
+  file_suffix <- "ratio.1D"
+  out_file_name <- paste(file_prefix, file_suffix, sep = "_")
+  
+  
+  eigenval_file <- read.csv(paste0(PCA_eigenvalues_directory,"/",eigenval_file_names[i]), header = FALSE, skip = 1)[, -1]
+  sigPC_file <- read.table(sigPC_file_names[i], header = FALSE)
+  sigPC_counts <- sigPC_file[, 2]
+  
+  Ratio_file <- matrix(NA, nrow = 36001, ncol = 2)
+  Ratio_file[, 1] <- 1:36001 
+  
+  for (j in 1:36001) {
+    
+    sigNum <- sigPC_counts[j]
+    
+    if (is.na(sigNum) || sigNum < 0) {
+      Ratio_file[j, 2] <- NA
+      next
+    }
+    
+    eigenvals <- eigenval_file[j, ]^2  # Extract the row
+    nonsigNum <- length(eigenvals) - sigNum  # Compute number of non-significant components
+    
+    sig_Var <- if (sigNum > 0) sum(eigenvals[1:sigNum]) else 0
+    nonsig_Var <- if (nonsigNum > 0) sum(eigenvals[(sigNum+1):(sigNum+nonsigNum)]) else 0
+    
+    # Compute ratio safely
+    if (sig_Var + nonsig_Var > 0) {
+      result <- sig_Var / nonsig_Var
+    } else {
+      result <- 0
+    }
+    
+    Ratio_file[j, 2] <- result
+    
+    # Print debug information
+    #print(paste("Row:", j, "Result:", result))
+  }
+  write.table(Ratio_file, paste0(PCA_ratio_directory,"/",out_file_name), row.names = FALSE, col.names = FALSE, sep = " ")
+}
+
+
+```
+
+percent of significant/all
+
+T-test (visual-regions)
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggsignif)
+library(patchwork)
+
+# Directories for the two conditions
+rh_Dir1 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie1_rh_sigPC"
+rh_Dir2 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie2_rh_sigPC"
+
+lh_Dir1 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie1_lh_sigPC"
+lh_Dir2 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie2_lh_sigPC"
+
+# Get file names
+rh_file1_names <- list.files(rh_Dir1, pattern = "Movie.*\\.1D$", full.names = TRUE)
+rh_file2_names <- list.files(rh_Dir2, pattern = "Movie.*\\.1D$", full.names = TRUE)
+
+lh_file1_names <- list.files(lh_Dir1, pattern = "Movie.*\\.1D$", full.names = TRUE)
+lh_file2_names <- list.files(lh_Dir2, pattern = "Movie.*\\.1D$", full.names = TRUE)
+
+# List of regions
+region_names <- c("V1", "V2", "V3", "hV4", "VO1", "VO2", "PHC1", "PHC2",
+                  "MST", "hMT", "LO2", "LO1", "V3b", "V3a", "IPS0", "IPS1",
+                  "IPS2", "IPS3", "IPS4", "IPS5", "SPL1")
+
+
+results <- data.frame(Region = character(), Hemisphere = character(),
+                      mono_components = numeric(), stereo_components = numeric(),
+                      MeanDiff = numeric(), SE = numeric(),
+                      p_value = numeric(), t_stat = numeric(), df = numeric(),
+                      Significance = character(), stringsAsFactors = FALSE)
+
+process_hemisphere <- function(hemi, dir1, dir2, file1_names, file2_names) {
+  hemi_results <- data.frame(Region = character(), Hemisphere = character(),
+                             mono_components = numeric(), stereo_components = numeric(),
+                             MeanDiff = numeric(), SE = numeric(),
+                             p_value = numeric(), t_stat = numeric(), df = numeric(),
+                             Significance = character(), stringsAsFactors = FALSE)
+  
+  for (region in region_names) {
+    # Construct the file name for the region-specific CSV file
+    region_file_name <- paste0("C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/", hemi, "_", region, ".csv")
+    regions <- read.csv(region_file_name)
+    visual_nodes <- regions[, 1]
+    
+    mono_values <- c()
+    stereo_values <- c()
+    
+    for (i in 1:length(file1_names)) {
+      # Read the second column and select the rows based on visual_nodes
+      data1 <- read.table(file1_names[i], header = FALSE)[, 2][visual_nodes]
+      data2 <- read.table(file2_names[i], header = FALSE)[, 2][visual_nodes]
+      
+      mono_values <- c(mono_values, data1)
+      stereo_values <- c(stereo_values, data2)
+    }
+    
+    # Calculate the mean values for each condition
+    mono_mean <- mean(mono_values)
+    stereo_mean <- mean(stereo_values)
+    
+    # Compute differences and its standard error
+    differences <- stereo_values - mono_values
+    mean_diff <- mean(differences)
+    se <- sd(differences) / sqrt(length(differences))
+    
+    
+    
+    # Perform a paired t-test
+    t_test_result <- t.test(mono_values, stereo_values, paired = TRUE)
+    p_val <- t_test_result$p.value
+    t_stat <- as.numeric(t_test_result$statistic)
+    df_val <- as.numeric(t_test_result$parameter)
+    
+    cat("Region:", region, "\\n")
+    print(t_test_result)
+    
+    # Determine significance level
+    significance <- ifelse(p_val < 0.05, "***", "ns")
+    
+    # Append the results for this region
+    hemi_results <- rbind(hemi_results,
+                          data.frame(Region = region, Hemisphere = hemi,
+                                     mono_components = mono_mean, stereo_components = stereo_mean,
+                                     MeanDiff = mean_diff, SE = se,
+                                     p_value = p_val, t_stat = t_stat, df = df_val,
+                                     Significance = significance,
+                                     stringsAsFactors = FALSE))
+  }
+  return(hemi_results)
+}
+
+# Process right hemisphere and left hemisphere data separately
+rh_results <- process_hemisphere("rh", rh_Dir1, rh_Dir2, rh_file1_names, rh_file2_names)
+lh_results <- process_hemisphere("lh", lh_Dir1, lh_Dir2, lh_file1_names, lh_file2_names)
+
+# Combine the results from both hemispheres
+results <- rbind(rh_results, lh_results)
+
+# Optionally, convert Region and Hemisphere to factors for better plotting/order control
+results$Region <- factor(results$Region, levels = region_names)
+results$Hemisphere <- factor(results$Hemisphere, levels = c("lh", "rh"))
+
+# View the combined results
+print(results)
+
+library(ggplot2)
+library(dplyr)
+
+# Transform data to ensure mirroring
+results_transformed <- results %>%
+  mutate(
+    SignificanceCategory = case_when(
+      Significance != "ns" & MeanDiff > 0 ~ "3D > 2D Significant",
+      Significance != "ns" & MeanDiff < 0 ~ "2D > 3D Significant",
+      TRUE ~ "Non-Significant"
+    ),
+    MeanDiff = abs(MeanDiff),  # Convert to absolute values
+    MeanDiff = ifelse(Hemisphere == "lh", -MeanDiff, MeanDiff),  # LH becomes negative, RH remains positive
+    xmin = MeanDiff - SE,  # Left end of error bar
+    xmax = MeanDiff + SE   # Right end of error bar
+  )
+
+# Define colors for significance categories
+custom_colors <- c(
+  "3D > 2D Significant" = "#9A180A",  
+  "2D > 3D Significant" = "#004B85",  
+  "Non-Significant" = "gray"
+)
+
+# Create the mirrored bar plot with error bars
+p_combined <- ggplot(results_transformed, aes(y = Region, x = MeanDiff, fill = SignificanceCategory)) +
+  geom_bar(stat = "identity", width = 0.5, position = position_identity()) +
+  geom_errorbarh(aes(xmin = xmin, xmax = xmax), height = 0.2, color = "black") +  # Error bars
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = custom_colors) +
+  scale_x_continuous(limits = c(-0.8, 0.8), labels = abs) +
+  theme_minimal(base_size = 17) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.position = "right"
+  ) +
+  labs(title = "                   LH                 RH", 
+       x = "Mean Difference (absolute value)",
+       fill = "Significance")
+
+# Print the plot
+print(p_combined)
+
+```
+
+T-test (groups)
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Directories for the two conditions
+rh_Dir1 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie1_rh_sigPC"
+rh_Dir2 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie2_rh_sigPC"
+
+lh_Dir1 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie1_lh_sigPC"
+lh_Dir2 <- "C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/Movie2_lh_sigPC"
+
+# Get file names
+rh_file1_names <- list.files(rh_Dir1, pattern = "Movie.*\\.1D$", full.names = TRUE)
+rh_file2_names <- list.files(rh_Dir2, pattern = "Movie.*\\.1D$", full.names = TRUE)
+lh_file1_names <- list.files(lh_Dir1, pattern = "Movie.*\\.1D$", full.names = TRUE)
+lh_file2_names <- list.files(lh_Dir2, pattern = "Movie.*\\.1D$", full.names = TRUE)
+
+# Define region groups
+early_visual   <- c("V1", "V2", "V3")
+ventral_stream <- c("hV4", "LO1", "LO2", "VO1", "VO2", "PHC1", "PHC2")
+dorsal_stream  <- c("V3a", "V3b", "hMT", "MST", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4", "IPS5", "SPL1")
+
+# Function to process hemisphere data and compute mean values per subject per group
+process_hemisphere <- function(hemi, file1_names, file2_names) {
+  group_data <- data.frame(Subject = integer(), Group = character(),
+                           Hemisphere = character(), Condition1 = numeric(), 
+                           Condition2 = numeric(), stringsAsFactors = FALSE)
+  
+  # Process each subject
+  for (i in seq_along(file1_names)) {
+    data_condition1 <- list(EarlyVisual = numeric(), VentralStream = numeric(), DorsalStream = numeric())
+    data_condition2 <- list(EarlyVisual = numeric(), VentralStream = numeric(), DorsalStream = numeric())
+    
+    # Loop over all regions (from all groups)
+    for (region in c(early_visual, ventral_stream, dorsal_stream)) {
+      region_file_name <- paste0("C:/Users/Fariv/Desktop/PCA_fMRI/Angela_Movie/", hemi, "_", region, ".csv")
+      regions <- read.csv(region_file_name)
+      visual_nodes <- regions[, 1]
+      
+      data1 <- read.table(file1_names[i], header = FALSE)[, 2][visual_nodes]
+      data2 <- read.table(file2_names[i], header = FALSE)[, 2][visual_nodes]
+      
+      if (region %in% early_visual) {
+        data_condition1$EarlyVisual <- c(data_condition1$EarlyVisual, data1)
+        data_condition2$EarlyVisual <- c(data_condition2$EarlyVisual, data2)
+      } else if (region %in% ventral_stream) {
+        data_condition1$VentralStream <- c(data_condition1$VentralStream, data1)
+        data_condition2$VentralStream <- c(data_condition2$VentralStream, data2)
+      } else if (region %in% dorsal_stream) {
+        data_condition1$DorsalStream <- c(data_condition1$DorsalStream, data1)
+        data_condition2$DorsalStream <- c(data_condition2$DorsalStream, data2)
+      }
+    }
+    
+    # Store the mean values for each group for this subject
+    group_data <- rbind(group_data,
+                        data.frame(Subject = i, Group = "Early Visual", Hemisphere = hemi,
+                                   Condition1 = mean(data_condition1$EarlyVisual),
+                                   Condition2 = mean(data_condition2$EarlyVisual)))
+    group_data <- rbind(group_data,
+                        data.frame(Subject = i, Group = "Ventral Stream", Hemisphere = hemi,
+                                   Condition1 = mean(data_condition1$VentralStream),
+                                   Condition2 = mean(data_condition2$VentralStream)))
+    group_data <- rbind(group_data,
+                        data.frame(Subject = i, Group = "Dorsal Stream", Hemisphere = hemi,
+                                   Condition1 = mean(data_condition1$DorsalStream),
+                                   Condition2 = mean(data_condition2$DorsalStream)))
+  }
+  
+  return(group_data)
+}
+
+# Process data for both hemispheres
+rh_group_data <- process_hemisphere("rh", rh_file1_names, rh_file2_names)
+lh_group_data <- process_hemisphere("lh", lh_file1_names, lh_file2_names)
+
+# Combine the data from both hemispheres
+group_data <- rbind(rh_group_data, lh_group_data)
+
+# Compute paired t-test statistics for each group and hemisphere
+t_test_results <- group_data %>%
+  group_by(Group, Hemisphere) %>%
+  summarise(
+    MeanDiff = mean(Condition2 - Condition1),
+    SE = sd(Condition2 - Condition1) / sqrt(n()),
+    p_value = t.test(Condition1, Condition2, paired = TRUE)$p.value,
+    .groups = "drop"
+  )
+
+# Create significance category using the original MeanDiff (before mirroring)
+t_test_results <- t_test_results %>%
+  mutate(SignificanceCategory = if_else(p_value < 0.05,
+                                        if_else(MeanDiff > 0, "3D > 2D Significant", "2D > 3D Significant"),
+                                        "Non-Significant"))
+
+# Mirror the MeanDiff: LH remains positive, RH is flipped to negative.
+t_test_results <- t_test_results %>%
+  mutate(
+    MeanDiff_mirrored = if_else(Hemisphere == "lh", -MeanDiff, MeanDiff),
+    xmin = MeanDiff_mirrored - SE,
+    xmax = MeanDiff_mirrored + SE
+  )
+
+# Custom colors for the significance categories
+custom_colors <- c(
+ "3D > 2D Significant" = "#9A180A",  
+  "2D > 3D Significant" = "#004B85", 
+  "Non-Significant" = "gray"
+)
+
+# Create the mirrored bar plot with error bars and annotate with significance categories
+ggplot(t_test_results, aes(y = Group, x = MeanDiff_mirrored, fill = SignificanceCategory)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  geom_errorbarh(aes(xmin = xmin, xmax = xmax), height = 0.2, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  # Annotate each bar with the significance category text
+  scale_fill_manual(values = custom_colors) +
+  # Display the x-axis labels as absolute values for a mirrored effect
+  scale_x_continuous(limits = c(-0.8, 0.8), labels = function(x) abs(x)) +
+  theme_minimal(base_size = 17) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.position = "right"
+  ) +
+  labs(title = "             LH                 RH", 
+       x = "Mean Difference (absolute value)",
+       fill = "Significance")
+
+
+
+```
+
+```{r}
+# --- Filter for Dorsal Stream only ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+dorsal_data <- group_data %>% 
+  filter(Group == "Dorsal Stream") %>% 
+  mutate(Diff = Condition2 - Condition1)
+
+# Pivot to wide format to get paired LH and RH differences for each subject
+dorsal_wide <- dorsal_data %>%
+  select(Subject, Hemisphere, Diff) %>%
+  pivot_wider(names_from = Hemisphere, values_from = Diff)
+
+
+dorsal_ttest <- t.test(dorsal_wide$lh, dorsal_wide$rh, paired = TRUE)
+print(dorsal_ttest)
+
+dorsal_summary <- dorsal_data %>%
+  group_by(Hemisphere) %>%
+  summarise(
+    MeanDiff = mean(Diff),
+    SE = sd(Diff) / sqrt(n()),
+    p_value = t.test(Diff, mu = 0)$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(SignificanceCategory = case_when(
+    p_value < 0.05 & MeanDiff > 0 ~ "3D > 2D Significant",
+    p_value < 0.05 & MeanDiff < 0 ~ "2D > 3D Significant",
+    TRUE ~ "Non-Significant"
+  ))
+
+
+# Create a significance label based on the paired t-test comparing lh vs. rh.
+sig_label <- ifelse(dorsal_ttest$p.value < 0.001, "***",
+                    ifelse(dorsal_ttest$p.value < 0.01, "**",
+                           ifelse(dorsal_ttest$p.value < 0.05, "*", "ns")))
+
+# Determine the y position for the significance bracket (a little above the highest error bar)
+y_max <- max(dorsal_summary$MeanDiff + dorsal_summary$SE+0.5)
+y_pos <- y_max-0.3  # Adjust this offset as needed
+
+# Now create the bar plot with significance bracket.
+ggplot(dorsal_summary, aes(x = Hemisphere, y = MeanDiff, fill = SignificanceCategory)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_errorbar(aes(ymin = MeanDiff - SE, ymax = MeanDiff + SE), width = 0.2) +
+  # Here we override the fill to use gray as specified:
+  scale_fill_manual(values = "#9A180A") +
+  scale_y_continuous(limits = c(0, 0.6)) +
+  # Add significance bracket comparing the two hemispheres
+  geom_signif(comparisons = list(c("lh", "rh")),
+              annotations = sig_label,
+              y_position = y_pos,
+              tip_length = 0.03,
+              textsize = 5) +
+  theme_minimal(base_size = 20) +
+  labs(
+    title = "Dorsal Stream: (3D - 2D) Differences by Hemisphere",
+    x = "Hemisphere",
+    y = "Mean Difference (3D - 2D)",
+    fill = "Significance"
+  )
+```
